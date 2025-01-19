@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hacker News</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1>Hacker News</h1>
+  <h3>Stories Published in the Last 5 Minutes: <span id="recentCount"><%= recentStoriesCount %></span></h3>
+
+  <!-- Stories List -->
+  <ul id="storiesList">
+  <% stories.forEach(story => { %>
+    <li>
+      <h4><a href="<%= story.url %>" target="_blank"><%= story.title %></a></h4>
+      <small>Published on: <%= story.date.toLocaleDateString() %> at <%= story.time.toLocaleTimeString() %></small>
+    </li>
+  <% }) %>
+</ul>
+
+  <!-- Add WebSocket client script -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io(); //Connecting to WebSocket server
+
+    //new stories from the server
+    socket.on('newStories', (newStories) => {
+      const storiesList = document.getElementById('storiesList');
+      const recentCount = document.getElementById('recentCount');
+
+      newStories.forEach(story => {
+        const listItem = document.createElement('li');
+        
+        const title = document.createElement('h4');
+        const link = document.createElement('a');
+        link.href = story.link;
+        link.target = "_blank";
+        link.innerText = story.title;
+        title.appendChild(link);
+        const time = document.createElement('small');
+        time.innerText = `Published: ${new Date(story.time).toLocaleString()}`;
+        
+        listItem.appendChild(title);
+        listItem.appendChild(time);
+        
+        storiesList.appendChild(listItem);
+      });
+
+      //Updating the recent count
+      const currentCount = parseInt(recentCount.innerText, 10);
+      recentCount.innerText = currentCount + newStories.length;
+    });
+  </script>
+</body>
+</html>

@@ -1,33 +1,28 @@
-const { Sequelize, DataTypes } = require('sequelize');
-require('dotenv').config();
+const { Model, DataTypes } = require('sequelize');
+const sequelize = require('../database');
 
-const sequelize = new Sequelize( process.env.DB_NAME, process.env.DB_USER, process.env.DB_PASSWORD,{
-  host: process.env.DB_HOST,
-  dialect: 'mysql',
-});
+class Story extends Model {}
 
-const Story = sequelize.define('Story', {
+Story.init({
   storyId: {
     type: DataTypes.STRING,
-    unique: true, //primary key
-    allowNull: false,
+    primaryKey: true
   },
   title: {
     type: DataTypes.STRING,
-    allowNull: false,
+    allowNull: false
   },
   url: {
-    type: DataTypes.TEXT,
-    allowNull: false,
-  },
-  date: {
-    type: DataTypes.DATE,
-    allowNull: false,
+    type: DataTypes.STRING,
+    allowNull: false
   },
   time: {
     type: DataTypes.DATE,
-    allowNull: false,
-  },
+    allowNull: false
+  }
+}, {
+  sequelize,
+  modelName: 'Story'
 });
 
-module.exports = { Story, sequelize };
+module.exports = { Story };

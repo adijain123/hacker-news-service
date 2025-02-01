@@ -2,41 +2,90 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const socketIo = require('socket.io');
+const { Sequelize } = require('sequelize');
 const { sequelize, Story } = require('./models/story');
 const { scrapeHackerNews } = require('./scraper');
-
-const { Sequelize } = require('sequelize');
+require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server);   //Initializing socket.io with the server
+const io = socketIo(server);
 
-//Setting up EJS as the view engine
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
-app.use(express.static(path.join(__dirname, 'public')));
+const publicDir = path.join(__dirname, 'public');
+if (!require('fs').existsSync(publicDir)) {
+  require('fs').mkdirSync(publicDir);
+}
 
-//Sync database
-sequelize.sync({ alter: true })
-  .then(() => console.log('Database synced successfully'))
-  .catch(err => console.log('Error syncing database:', err));
+app.use(express.static(publicDir));
 
-//Routes
+function getRecentStoriesCount() {
+  const fiveMinutesAgo = new Date(new Date() - 5 * 60 * 1000);
+  return Story.count({
+    where: {
+      time: {
+        [Sequelize.Op.gte]: fiveMinutesAgo
+      }
+    }
+  });
+}
+
+function emitUpdatedStories() {
+  try {
+    const stories = Story.findAll({
+      order: [['time', 'DESC']],
+      limit: 30
+    });
+
+    const recentStoriesCount = getRecentStoriesCount();
+    
+    io.emit('newStories', {
+      stories,
+      recentStoriesCount
+    });
+  } catch (err) {
+    console.error('Error emitting updated stories:', err);
+  }
+}
+
+function initializeApp() {
+  try {
+    sequelize.authenticate();
+    console.log('Database connection established');
+
+    sequelize.sync({ alter: true });
+    console.log('Database synced successfully');
+    
+    scrapeHackerNews();
+    console.log('Initial scrape completed');
+    
+    emitUpdatedStories();
+    
+    setInterval(async () => {
+      try {
+        await scrapeHackerNews();
+        console.log('Periodic scrape completed');
+        await emitUpdatedStories();
+      } catch (err) {
+        console.error('Error in scraper interval:', err);
+      }
+    }, 5 * 60 * 1000);
+  } catch (err) {
+    console.error('Error initializing app:', err);
+    process.exit(1);
+  }
+}
+
 app.get('/', async (req, res) => {
   try {
-    //Fetching latest stories
-    const stories = await Story.findAll({order: [['time', 'DESC']] });
-
-    //Fetching number of stories published in the last 5 minutes
-    const fiveMinutesAgo = new Date(new Date() - 5 * 60 * 1000);
-    const recentStoriesCount = await Story.count({
-      where: {
-        time: {
-          [Sequelize.Op.gte]: fiveMinutesAgo //Using Sequelize.Op.gte for date comparison
-        }
-      }
+    const stories = await Story.findAll({
+      order: [['time', 'DESC']],
+      limit: 30
     });
+
+    const recentStoriesCount = await getRecentStoriesCount();
 
     res.render('index', { stories, recentStoriesCount });
   } catch (err) {
@@ -45,26 +94,40 @@ app.get('/', async (req, res) => {
   }
 });
 
-//WebSocket connection
 io.on('connection', (socket) => {
   console.log('New client connected');
-
-  //Sending real-time updates (new stories) every time scraper runs
-  scrapeHackerNews();
 
   socket.on('disconnect', () => {
     console.log('Client disconnected');
   });
 });
 
-//Schedule scraping every 5 minutes
-setInterval(() => {
-  console.log('Running scraper...');
-  scrapeHackerNews();
-}, 5 * 60 * 1000); //5 minutes
+server.on('error', (error) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error('Port is already in use. Please use a different port or kill the process using the current port.');
+    process.exit(1);
+  } else {
+    console.error('Server error:', error);
+    process.exit(1);
+  }
+});
 
-//Initial scrape on server start
-scrapeHackerNews();
+function tryPort(port) {
+  server.listen(port, () => {
+    console.log(`Server running on port ${port}`);
+    initializeApp().catch(err => {
+      console.error('Failed to initialize app:', err);
+      process.exit(1);
+    });
+  });
+}
 
-//Start the server
-server.listen(3000, () => console.log('Server with WebSocket running on http://localhost:3000'));
+const PORT = process.env.PORT || 3001;
+server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') {
+    console.log(`Port ${PORT} is in use, trying ${PORT + 1}`);
+    tryPort(PORT + 1);
+  }
+});
+
+tryPort(PORT);

@@ -3,55 +3,152 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Hacker News</title>
+  <title>Hacker News Live Feed</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 <body>
-  <h1>Hacker News</h1>
-  <h3>Stories Published in the Last 5 Minutes: <span id="recentCount"><%= recentStoriesCount %></span></h3>
+  <header>
+    <h1><i class="fab fa-hacker-news"></i> Hacker News Live Feed</h1>
+  </header>
 
-  <!-- Stories List -->
+  <div class="stats">
+    <div class="stats-item">
+      <div class="stats-number" id="recentCount"><%= recentStoriesCount %></div>
+      <div>Stories in last 5 minutes</div>
+    </div>
+    <div class="stats-item">
+      <div class="stats-number" id="totalCount"><%= stories.length %></div>
+      <div>Total stories</div>
+    </div>
+    <div class="stats-item">
+      <div class="stats-number" id="updateTime">5:00</div>
+      <div>Next update in</div>
+    </div>
+  </div>
+
+  <div id="filterContainer">
+    <input type="text" id="searchInput" placeholder="Filter stories..." class="search-input">
+    <select id="sortSelect" class="sort-select">
+      <option value="time">Sort by Time</option>
+      <option value="title">Sort by Title</option>
+    </select>
+  </div>
+
   <ul id="storiesList">
-  <% stories.forEach(story => { %>
-    <li>
-      <h4><a href="<%= story.url %>" target="_blank"><%= story.title %></a></h4>
-      <small>Published on: <%= story.date.toLocaleDateString() %> at <%= story.time.toLocaleTimeString() %></small>
-    </li>
-  <% }) %>
-</ul>
+    <% stories.forEach(story => { %>
+      <li class="story-item">
+        <div class="story-title">
+          <a href="<%= story.url %>" target="_blank">
+            <%= story.title %>
+          </a>
+        </div>
+        <div class="story-meta">
+          <span><i class="far fa-clock"></i> <%= new Date(story.time).toLocaleString() %></span>
+          <% if (story.url) { %>
+            <span class="story-source">
+              <i class="fas fa-link"></i> 
+              <%= new URL(story.url).hostname.replace('www.', '') %>
+            </span>
+          <% } %>
+        </div>
+      </li>
+    <% }) %>
+  </ul>
 
-  <!-- Add WebSocket client script -->
+  <div id="loading" class="loading" style="display: none;">
+    <i class="fas fa-spinner fa-spin"></i> Loading new stories...
+  </div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script>
-    const socket = io(); //Connecting to WebSocket server
+    const socket = io();
+    const storiesList = document.getElementById('storiesList');
+    const recentCount = document.getElementById('recentCount');
+    const totalCount = document.getElementById('totalCount');
+    const updateTime = document.getElementById('updateTime');
+    const searchInput = document.getElementById('searchInput');
+    const sortSelect = document.getElementById('sortSelect');
+    const loading = document.getElementById('loading');
 
-    //new stories from the server
-    socket.on('newStories', (newStories) => {
-      const storiesList = document.getElementById('storiesList');
-      const recentCount = document.getElementById('recentCount');
+    let stories = <%- JSON.stringify(stories) %>;
+    let updateInterval;
 
-      newStories.forEach(story => {
-        const listItem = document.createElement('li');
-        
-        const title = document.createElement('h4');
-        const link = document.createElement('a');
-        link.href = story.link;
-        link.target = "_blank";
-        link.innerText = story.title;
-        title.appendChild(link);
-        const time = document.createElement('small');
-        time.innerText = `Published: ${new Date(story.time).toLocaleString()}`;
-        
-        listItem.appendChild(title);
-        listItem.appendChild(time);
-        
-        storiesList.appendChild(listItem);
-      });
+    function updateTimer() {
+      let seconds = 300; // 5 minutes
+      updateInterval = setInterval(() => {
+        seconds--;
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        updateTime.textContent = `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+        if (seconds <= 0) {
+          clearInterval(updateInterval);
+        }
+      }, 1000);
+    }
 
-      //Updating the recent count
-      const currentCount = parseInt(recentCount.innerText, 10);
-      recentCount.innerText = currentCount + newStories.length;
+    function filterAndSortStories() {
+      const searchTerm = searchInput.value.toLowerCase();
+      const sortBy = sortSelect.value;
+
+      let filteredStories = stories.filter(story => 
+        story.title.toLowerCase().includes(searchTerm)
+      );
+
+      if (sortBy === 'time') {
+        filteredStories.sort((a, b) => new Date(b.time) - new Date(a.time));
+      } else if (sortBy === 'title') {
+        filteredStories.sort((a, b) => a.title.localeCompare(b.title));
+      }
+
+      renderStories(filteredStories);
+    }
+
+    function renderStories(storiesToRender) {
+      storiesList.innerHTML = storiesToRender.map(story => `
+        <li class="story-item">
+          <div class="story-title">
+            <a href="${story.url}" target="_blank">
+              ${story.title}
+            </a>
+          </div>
+          <div class="story-meta">
+            <span><i class="far fa-clock"></i> ${new Date(story.time).toLocaleString()}</span>
+            ${story.url ? `
+              <span class="story-source">
+                <i class="fas fa-link"></i> 
+                ${new URL(story.url).hostname.replace('www.', '')}
+              </span>
+            ` : ''}
+          </div>
+        </li>
+      `).join('');
+    }
+
+    searchInput.addEventListener('input', filterAndSortStories);
+    sortSelect.addEventListener('change', filterAndSortStories);
+
+    socket.on('newStories', (data) => {
+      loading.style.display = 'none';
+      if (data.stories && data.stories.length > 0) {
+        stories = data.stories;
+        filterAndSortStories();
+        clearInterval(updateInterval);
+        updateTimer();
+      }
+      if (data.recentStoriesCount !== undefined) {
+        recentCount.textContent = data.recentStoriesCount;
+        totalCount.textContent = data.stories.length;
+      }
     });
+
+    // Start the update timer
+    updateTimer();
+
+    // Show loading indicator before each update
+    setInterval(() => {
+      loading.style.display = 'block';
+    }, 5 * 60 * 1000 - 2000); // Show 2 seconds before update
   </script>
 </body>
 </html>

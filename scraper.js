@@ -1,63 +1,69 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
-const { Story } = require('./models/story'); //Importing the Sequelize model
+const { Story } = require('./models/story');
 
-//Scraper function
 async function scrapeHackerNews() {
   try {
-    //Fetching Hacker News page
-    const { data } = await axios.get('https://news.ycombinator.com/');
-    const $ = cheerio.load(data);
+    console.log('Starting to scrape Hacker News...');
+    const response = await axios.get('https://news.ycombinator.com/');
+    const $ = cheerio.load(response.data);
 
-    //Parsing stories
     const stories = [];
     $('.athing').each((index, element) => {
-      const titleElement = $(element).find('.titleline a'); //Finding the title element
-      const source = $(element).find('.sitestr').text(); //finding source
+      try {
+        const titleElement = $(element).find('.titleline > a').first();
+        const title = titleElement.text().trim();
+        const url = titleElement.attr('href');
+        const storyId = $(element).attr('id');
 
-      let title = titleElement.clone().children().remove().end().text(); //Removing nested elements
-      if (!title.includes(source)) {title = `${title} - ${source}`;}
+        if (!title || !url || !storyId) {
+          console.log('Skipping story due to missing required fields');
+          return;
+        }
 
-      const url = $(element).find('.title a').attr('href');
+        const fullUrl = url.startsWith('http') ? url : `https://news.ycombinator.com/${url}`;
+        const time = new Date();
 
-      //Finding the associated subline element
-      const sublineElement = $(element).next().find('.subline'); //Using .next() to locate the subline row
-      const ageElement = sublineElement.find('.age'); //Locating the age span within subline
-      const publishTime = ageElement.attr('title');   //Extracting the 'title' attribute
-      
-      //Parsing the date and time from the publishTime string
-      const [dateTime, timestamp] = publishTime.split(' '); //Spliting into date-time and Unix timestamp
-      const date = new Date(dateTime); //Parsing the ISO date-time string into a JavaScript Date object
-      const time = new Date(parseInt(timestamp) * 1000); //Converting the Unix timestamp to a Date object
+        const timeElement = $(element).next().find('.age');
+        if (timeElement.length > 0) {
+          const timestamp = timeElement.attr('title');
+          if (timestamp) {
+            const match = timestamp.match(/(\d+)/);
+            if (match) {
+              const unixTime = parseInt(match[1], 10);
+              time.setTime(unixTime * 1000);
+            }
+          }
+        }
 
-      const formattedDate = date.toLocaleDateString(); //Formating the date for frontend
-      const formattedTime = time.toLocaleTimeString(); //Formating the time for frontend
-
-      const fullUrl = url.startsWith('http') ? url : `https://news.ycombinator.com/${url}`;
-
-      //Extracting the storyId (can be done by parsing the first part of the link or other method)
-      const storyId = $(element).attr('id'); // This id attribute is available on each story
-
-      if (title && fullUrl && storyId && date && time) {
-        stories.push({ storyId, title, url: fullUrl, date: date, time: time }); //Storing both date and time
+        stories.push({
+          storyId,
+          title,
+          url: fullUrl,
+          time
+        });
+      } catch (err) {
+        console.error(`Error parsing story ${index}:`, err);
       }
     });
 
-    console.log(stories); //Logging the scraped stories
+    console.log(`Found ${stories.length} stories`);
 
-    //Saving stories to the database
     for (const story of stories) {
-      await Story.upsert({
-        storyId: story.storyId,
-        title: story.title,
-        url: story.url,
-        date: story.date,
-        time: story.time
-      });
+      try {
+        await Story.upsert(story);
+        console.log(`Saved story ${story.storyId}`);
+      } catch (err) {
+        console.error(`Error saving story ${story.storyId}:`, err);
+      }
     }
+
     console.log('Scraping completed and data saved');
+    return stories;
   } catch (err) {
     console.error('Error scraping Hacker News:', err);
+    throw err;
   }
 }
+
 module.exports = { scrapeHackerNews };
